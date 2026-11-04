@@ -1,0 +1,12 @@
+{
+    "name": "scriptloadmonitor",
+    "version-string": "1.0.0",
+    "description": "Script Load Monitor. A read-only log of what Papyrus is doing: frame rate, overstress, stack counts, top scripts and who they target, and a role for each script.",
+    "homepage": "https://github.com/ApocryphaRealm/ScriptLoadMonitor",
+    "license": "GPL-3.0-or-later",
+    "dependencies": [
+        "commonlibsse-ng",
+        "spdlog"
+    ],
+    "builtin-baseline": "8d3649ba34aab36914ddd897958599aa0a91b08e"
+}
