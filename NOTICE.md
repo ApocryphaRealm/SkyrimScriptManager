@@ -1,4 +1,4 @@
-# Script Load Monitor - copyright and licence
+# Skyrim Script Manager - copyright and licence
 
 Copyright (C) 2026 ApocryphaRealm
 
@@ -16,8 +16,10 @@ SPDX-License-Identifier: GPL-3.0-or-later
 
 ## Why GPL-3.0-or-later
 
-This build links CommonLibSSE-NG 3.7.0, which is MIT. The work is GPL-3.0-or-later so a later Skyrim 1.7.x build line, on the GPL
-CommonLibSSE-NG 7.x, needs no relicence.
+The Skyrim 1.7.x build statically links CommonLibSSE-NG 7.2.0 (https://github.com/alandtse/CommonLibSSE-NG, commit
+7a60f4de794095d7b0f8928d1b930a52e9a7da83), GPL-3.0-or-later WITH its Modding Exception and GPL-3.0 Linking Exception,
+whose README requires a linking plugin to be GPL-3.0-or-later or GPL-compatible. The whole work, both build lines and the
+source, is GPL-3.0-or-later from its first version.
 
 Components under other licences, with their notices: `THIRD_PARTY_NOTICES.md`.
 

@@ -42,5 +42,17 @@ clayne/DevourmentPlugin). No repo that classifies scripts by what they call, non
 The monitor half overlaps Stack Stalker, the Real Time Script Profiler and SPS's minute line, so it stays as thin as a manager needs:
 a log left running, not a rival profiler. No code was copied from any of them. The classifier and any management are the new part.
 
+## The loop watch and guard (searched again 2026-11-04)
+
+Searched for "stuck effect", "infinite loop", "recursion", "event spam" on Skyrim SE: web searches for Nexus (pages not read, summaries only), and `gh search repos` and `gh search code`. Nothing that detects a repeating event by rate, for any object, or drops repeats of one.
+
+- Recursion Monitor (Nexus 76867; RecursionFPSFix.dll in this list, read; source github.com/Nightfallstorm/Skyrim-Recursion-FPS-Fix, GPL-3.0, read). A write_call on 98130/104853 + 0x7F, the call check inside VirtualMachine::AttemptFunctionCall. When a stack passes 1000 frames and the function is already on it, it clears the call so the VM ends it, with a message box. Papyrus Tweaks carries the same fix (src/hooks/fix/Recursion.cpp).
+  - How we differ: it stops one stack that has run away; ours watches events across objects and flags far shallower stacks, ending none. The 2026-11-04 flood's stacks were 0 to 4 frames, so it could not see it. We do not duplicate its case: our recursion line is report only and says who ends it. No code copied.
+- A frequent call fix of OnMagicEffectApply (Nexus 67968, summary only): replaces the event in named vanilla scripts. A fix per script, the opposite of general.
+- A Nexus article (skyrim/articles/315, summary only) on the same event's vanilla cost gives mod authors a keyword workaround. Authoring advice, not a runtime tool.
+- Stack Stalker and the profilers above watch stacks; none counts events per object or names a cause.
+
+The hook sits where this mod's `SendEvent` count already was. No SKSE mod found drops events there.
+
 Project precedent used: `6. current wip mods\BowComboControls` (repo layout and build), `.MD\scripts\gamecode.py` (reading the VM
 from a decrypted 1.5.97 dump).

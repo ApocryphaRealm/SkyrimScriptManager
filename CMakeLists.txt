@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.21)
 
 project(
-	ScriptLoadMonitor
+	SkyrimScriptManager
 	VERSION 1.0.0
 	LANGUAGES CXX
 )
@@ -37,6 +37,10 @@ if (MSVC)
 	target_compile_options(${PROJECT_NAME} PRIVATE "/d1trimfile:${PROJECT_NATIVE_DIR}")
 	target_link_options(${PROJECT_NAME} PRIVATE /PDBALTPATH:%_PDB%)
 endif()
+
+# Build line: 1 (SE/AE 1.6, CommonLibSSE-NG 3.7) or 17 (Skyrim 1.7.x, CommonLibSSE-NG 7.2).
+set(RUNTIME_LINE "1" CACHE STRING "Build line: 1 (SE/AE 1.6) or 17 (Skyrim 1.7.x)")
+target_compile_definitions(${PROJECT_NAME} PRIVATE RUNTIME_LINE=${RUNTIME_LINE})
 
 target_include_directories(${PROJECT_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 

@@ -1,7 +1,7 @@
 {
-    "name": "scriptloadmonitor",
+    "name": "skyrimscriptmanager",
     "version-string": "1.0.0",
-    "description": "Script Load Monitor. A read-only log of what Papyrus is doing: frame rate, overstress, stack counts, top scripts and who they target, and a role for each script.",
+    "description": "Skyrim Script Manager. A read-only log of what Papyrus is doing: frame rate, overstress, stack counts, top scripts and who they target, and a role for each script.",
     "homepage": "https://github.com/ApocryphaRealm/ScriptLoadMonitor",
     "license": "GPL-3.0-or-later",
     "dependencies": [

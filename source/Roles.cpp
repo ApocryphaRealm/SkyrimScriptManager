@@ -34,7 +34,7 @@ namespace Roles
 		using RoleClassifier::Role;
 		using RoleClassifier::RoleName;
 
-		inline constexpr const char* kOverridesPath = "Data/SKSE/Plugins/ScriptLoadMonitor_Overrides.ini";
+		inline constexpr const char* kOverridesPath = "Data/SKSE/Plugins/SkyrimScriptManager_Overrides.ini";
 
 		struct Entry
 		{
@@ -131,13 +131,13 @@ namespace Roles
 				for (const auto& [eventName, event] : entry.events) { eventCounts[static_cast<int>(event.role)]++; }
 			}
 
-			std::ofstream out(LogFile("ScriptLoadMonitor_Roles.txt"), std::ios::trunc);
+			std::ofstream out(LogFile("SkyrimScriptManager_Roles.txt"), std::ios::trunc);
 			if (!out)
 			{
-				logger::warn("Could not write ScriptLoadMonitor_Roles.txt");
+				logger::warn("Could not write SkyrimScriptManager_Roles.txt");
 				return;
 			}
-			out << "Script Load Monitor: what each loaded script could tolerate when frames are low. Nothing is held or dropped by this mod.\n";
+			out << "Skyrim Script Manager: what each loaded script could tolerate when frames are low. These roles hold and drop nothing by themselves.\n";
 			out << "may drop: only reads and one-shot looks or sounds, with nothing left waiting for a second half.\n";
 			out << "may wait: the same, but it keeps its own state, waits, or starts something a later event ends. Late is fine, never is not.\n";
 			out << "never touch: anything else, and anything unsure. The reason is the first call that decided it.\n";
@@ -164,7 +164,7 @@ namespace Roles
 				}
 			}
 			logger::info("Roles written to {}: scripts {} may drop, {} may wait, {} never touch; events {} may drop, {} may wait, {} never touch",
-				LogFile("ScriptLoadMonitor_Roles.txt").filename().string(), counts[0], counts[1], counts[2], eventCounts[0], eventCounts[1], eventCounts[2]);
+				LogFile("SkyrimScriptManager_Roles.txt").filename().string(), counts[0], counts[1], counts[2], eventCounts[0], eventCounts[1], eventCounts[2]);
 		}
 
 		// ---- the worker ----
@@ -294,7 +294,7 @@ namespace Roles
 
 		void LoadFlips()
 		{
-			std::ifstream file(LogFile("ScriptLoadMonitor_Flips.txt"));
+			std::ifstream file(LogFile("SkyrimScriptManager_Flips.txt"));
 			if (!file) { return; }
 			std::map<std::string, std::string> flips;
 			for (std::string line; std::getline(file, line);)
@@ -303,7 +303,7 @@ namespace Roles
 				if (tab == std::string::npos) { continue; }
 				flips[line.substr(0, tab)] = line.substr(tab + 1);
 			}
-			if (!flips.empty()) { logger::info("{} scripts stay never touch from earlier sessions (ScriptLoadMonitor_Flips.txt; delete a line to judge one again)", flips.size()); }
+			if (!flips.empty()) { logger::info("{} scripts stay never touch from earlier sessions (SkyrimScriptManager_Flips.txt; delete a line to judge one again)", flips.size()); }
 			std::scoped_lock l(g_lock);
 			g_flips = std::move(flips);
 		}
@@ -389,7 +389,7 @@ namespace Roles
 			}
 		}
 		if (flipped.empty()) { return; }
-		std::ofstream file(LogFile("ScriptLoadMonitor_Flips.txt"), std::ios::app);
+		std::ofstream file(LogFile("SkyrimScriptManager_Flips.txt"), std::ios::app);
 		for (const auto& [script, what] : flipped) { file << script << '\t' << what << '\n'; }
 		WriteTable();
 	}

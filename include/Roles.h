@@ -4,7 +4,7 @@
 #include <utility>
 #include <vector>
 
-// What each script may be allowed to do when frames are low. This mod only classifies and reports: nothing is held or dropped.
+// What each script may be allowed to do when frames are low. This only classifies and reports: nothing is held or dropped because of a role.
 namespace Roles
 {
 	void Configure(bool a_enabled);

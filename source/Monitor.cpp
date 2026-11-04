@@ -1,7 +1,7 @@
 // The listener. Own code, GPL-3.0-or-later (2026-11-04).
 //
-// Read-only: it wraps VM virtual functions to time and count them, in the same slots Skyrim Performance Solution uses, and
-// calls the original every time with the original arguments. It changes no game state, drops nothing and delays nothing.
+// It wraps VM virtual functions to time and count them, in the same slots Skyrim Performance Solution uses, and calls the
+// original with the original arguments. The one exception is SendEvent, and only with bLoopGuard=1: see LoopGuard.cpp.
 //
 // What the 1.5.97 code does, read from a decrypted dump of the game's .text (SkyrimVM::Update id 53115, VirtualMachine::Update
 // vfunc 4, id 98133 to 98137, the stats sink at rva 0x92A9C0):
@@ -20,6 +20,7 @@
 // turns off and says so. Every read is under structured exception handling: a fault turns the walk off for the session.
 #include "PCH.h"
 
+#include "LoopGuard.h"
 #include "Monitor.h"
 #include "Roles.h"
 
@@ -238,7 +239,12 @@ namespace Monitor
 			// handlePolicy sits at the offset the header says, because it points inside SkyrimVM.
 			a_failed = "handlePolicy does not point at SkyrimVM's handle policy";
 			auto* skyrimVM = RE::SkyrimVM::GetSingleton();
-			if (static_cast<void*>(a_vm->handlePolicy) != static_cast<void*>(&skyrimVM->handlePolicy)) { return false; }
+#if RUNTIME_LINE == 17
+			auto* expectedPolicy = &skyrimVM->GetVMRuntimeData().handlePolicy;
+#else
+			auto* expectedPolicy = &skyrimVM->handlePolicy;
+#endif
+			if (static_cast<void*>(a_vm->handlePolicy) != static_cast<void*>(expectedPolicy)) { return false; }
 
 			// The four queue pointers point at the queues the header places beside them, one each way.
 			a_failed = "the suspend queue pointers do not point at the two suspend queues";
@@ -321,6 +327,8 @@ namespace Monitor
 			std::unordered_map<std::string, std::uint32_t> byFunction;   // "script.function": what began the stack
 			std::unordered_map<std::string, std::uint32_t> byCall;       // "script -> function": what a stack is calling right now
 			std::unordered_map<RE::VMHandle, std::uint32_t> byHandle;
+			std::unordered_map<RE::VMHandle, std::uint32_t> perWalk;     // stacks per object at the current walk, an effect counting for its actor
+			std::unordered_map<std::string, std::pair<std::uint32_t, std::uint32_t>> deep;   // "script.function": frames, frames read in one function
 			std::unordered_set<std::string> edgeKeys;
 			std::vector<std::pair<std::string, std::string>> edges;
 			std::uint64_t longestWaitTicks = 0;
@@ -340,11 +348,21 @@ namespace Monitor
 			QueryPtr query;
 		};
 
+		// A type check is not a validity check, and GetObject() writes a refcount through the value (AMF 2.2.1's crash). So the
+		// value word is judged first and read without a copy.
 		RE::VMHandle HandleOf(const RE::BSScript::Variable& a_var)
 		{
-			if (!a_var.IsObject() || a_var.IsNoneObject()) { return 0; }
-			const auto object = a_var.GetObject();
-			return object ? object->GetHandle() : 0;
+			static_assert(sizeof(RE::BSScript::Variable) == 0x10);
+			if (!a_var.IsObject()) { return 0; }
+			const auto word = reinterpret_cast<const std::uintptr_t*>(&a_var)[1];
+			if (word < 0x10000 || word >= 0x0000800000000000ULL || (word & 7) != 0) { return 0; }
+			return reinterpret_cast<const RE::BSScript::Object*>(word)->GetHandle();
+		}
+
+		void NoteOn(RE::VMHandle a_handle)
+		{
+			g_tally.byHandle[a_handle]++;
+			g_tally.perWalk[LoopGuard::StackKey(a_handle)]++;
 		}
 
 		void AddEdge(const char* a_caller, const char* a_callee)
@@ -394,11 +412,13 @@ namespace Monitor
 				const Frame* bottom = top;
 				const Frame* frame = top;
 				int depth = 0;
+				std::array<const RE::BSScript::IFunction*, 64> functions{};
 				const char* calleeName = haveRequest && requested.data() ? requested.data() : nullptr;
 				bool topOfStack = true;
 				while (frame && depth < 64)
 				{
 					const auto* fn = frame->owningFunction.get();
+					functions[static_cast<std::size_t>(depth)] = fn;
 					if (fn)
 					{
 						if (calleeName)
@@ -424,7 +444,35 @@ namespace Monitor
 				{
 					g_tally.unnamed++;
 				}
-				if (const auto handle = HandleOf(bottom->self)) { g_tally.byHandle[handle]++; }
+				// An effect that has ended leaves self empty on a stack still waiting to start (nearly every stack of the 2026-11-04
+				// flood), but the start's first parameter is still its target.
+				auto handle = HandleOf(bottom->self);
+				if (handle == 0 && fn && fn->GetParamCount() > 0 && (_stricmp(fn->GetName().c_str(), "OnEffectStart") == 0 || _stricmp(fn->GetName().c_str(), "OnEffectFinish") == 0))
+				{
+					auto* writable = const_cast<Stack*>(a_stack);
+					handle = HandleOf(writable->GetStackFrameVariable(bottom, 0, writable->GetPageForFrame(bottom)));
+				}
+				if (handle) { NoteOn(handle); }
+
+				// Recursion: a deep stack, or one function many times on it. The frames read stop at 64.
+				const auto& loop = LoopGuard::GetSettings();
+				if (fn && (a_stack->frames >= static_cast<std::uint32_t>(loop.deepFrames) || depth >= loop.sameFunctionFrames))
+				{
+					std::uint32_t most = 0;
+					for (int i = 0; i < depth; ++i)
+					{
+						std::uint32_t same = 0;
+						for (int j = i; j < depth; ++j)
+						{
+							if (functions[static_cast<std::size_t>(j)] == functions[static_cast<std::size_t>(i)]) { same++; }
+						}
+						most = std::max(most, same);
+					}
+					if (a_stack->frames >= static_cast<std::uint32_t>(loop.deepFrames) || most >= static_cast<std::uint32_t>(loop.sameFunctionFrames))
+					{
+						g_tally.deep[std::format("{}.{}", fn->GetObjectTypeName().c_str(), fn->GetName().c_str())] = { a_stack->frames, most };
+					}
+				}
 				return;
 			}
 
@@ -435,7 +483,7 @@ namespace Monitor
 				g_tally.byFunction[std::move(what)]++;
 				auto handle = HandleOf(requestedSelf);
 				if (handle == 0 && !requestedArgs.empty()) { handle = HandleOf(requestedArgs[0]); }
-				if (handle) { g_tally.byHandle[handle]++; }
+				if (handle) { NoteOn(handle); }
 				return;
 			}
 			g_tally.unnamed++;
@@ -524,6 +572,7 @@ namespace Monitor
 			const auto deadline = start + static_cast<std::uint64_t>(g_settings.maxWalkMS * g_ticksPerMS);
 			const auto cap = static_cast<std::size_t>(g_settings.maxStacksPerWalk);
 
+			g_tally.perWalk.clear();
 			std::vector<Entry> entries;
 			entries.reserve(std::min<std::size_t>(cap, 1024));
 			CopySuspended(a_vm, entries, cap);
@@ -554,6 +603,9 @@ namespace Monitor
 				}
 			}
 			g_firstSeen.swap(g_firstSeenNext);
+
+			LoopGuard::OnWalk(a_vm, g_tally.perWalk);
+			for (const auto& [function, numbers] : g_tally.deep) { LoopGuard::NoteDeepStack(function, numbers.first, numbers.second); }
 
 			const auto spent = Now() - start;
 			g_tally.samples++;
@@ -791,6 +843,7 @@ namespace Monitor
 					line(std::format("  {:>7}  {}", count, DescribeHandle(a_vm, handle)));
 				}
 			}
+			for (auto& loopLine : LoopGuard::ReportLines()) { line(std::move(loopLine)); }
 			Roles::Audit(g_tally.edges);
 			g_tally = Tally{};
 
@@ -841,6 +894,8 @@ namespace Monitor
 
 			if (!g_started.load(std::memory_order_relaxed)) { return; }
 			if (g_lastReport == 0) { g_lastReport = now; }
+
+			LoopGuard::Tick(a_vm, over, g_layoutOK, now, g_ticksPerMS * 1000.0);
 
 			const auto ticksPerSecond = g_ticksPerMS * 1000.0;
 			const auto since = [&](std::uint64_t a_then) { return static_cast<double>(now - a_then) / ticksPerSecond; };
@@ -922,6 +977,7 @@ namespace Monitor
 			{
 				CountEvent(a_name.data());
 				CountTarget(a_handle);
+				if (LoopGuard::OnSendEvent(a_vm, a_handle, a_name.data())) { return; }
 				func(a_vm, a_handle, a_name, a_args);
 			}
 			static inline REL::Relocation<decltype(thunk)> func;
@@ -952,8 +1008,9 @@ namespace Monitor
 		OverstressHook::func = vtable.write_vfunc(0x6, OverstressHook::thunk);
 		TasksToJobsHook::func = vtable.write_vfunc(0x12, TasksToJobsHook::thunk);
 		SendEventHook::func = vtable.write_vfunc(0x24, SendEventHook::thunk);
+		LoopGuard::SetOriginalSend(reinterpret_cast<LoopGuard::SendFn>(SendEventHook::func.address()));
 		SendEventAllHook::func = vtable.write_vfunc(0x25, SendEventAllHook::thunk);
-		logger::info("Hooks installed on VirtualMachine at {:X}: Update (4), UpdateTasklets (5), SetOverstressed (6), TasksToJobs (12), SendEvent (24), SendEventAll (25); each calls the original unchanged", vtable.address());
+		logger::info("Hooks installed on VirtualMachine at {:X}: Update (4), UpdateTasklets (5), SetOverstressed (6), TasksToJobs (12), SendEvent (24), SendEventAll (25); each calls the original unchanged, SendEvent unless the loop guard is on and drops a repeat", vtable.address());
 	}
 
 	void OnDataLoaded()
@@ -1013,9 +1070,9 @@ namespace Monitor
 			}
 		}
 		return std::format(
-			R"({{"ok":true,"started":{},"layoutOK":{},"layoutResult":"{}","walkOff":{},"overstressed":{},"budgetMS":{:.3f},"running":{},"suspended":{},"queuedCalls":{},"detached":{},"statsEvents":{},"frames":{},"updatesOffMain":{},"taskletCallsOffMain":{},"tasksToJobsCalls":{},"reports":{},{},"lastReport":"{}"}})",
+			R"({{"ok":true,"started":{},"layoutOK":{},"layoutResult":"{}","walkOff":{},"overstressed":{},"budgetMS":{:.3f},"running":{},"suspended":{},"queuedCalls":{},"detached":{},"statsEvents":{},"frames":{},"updatesOffMain":{},"taskletCallsOffMain":{},"tasksToJobsCalls":{},"reports":{},{},{},"lastReport":"{}"}})",
 			g_started.load(), g_layoutOK, g_layoutResult, g_walkOff.load(), g_overstressed.load(), g_budget.load(),
 			g_nowRunning.load(), g_nowSuspended.load(), g_nowMessages.load(), g_nowDetached.load(), g_statsEvents.load(), g_allFrames.load(),
-			g_updatesOffMain.load(), g_taskletsOffMain.load(), g_tasksToJobsCalls.load(), g_reports.load(), Roles::StateJsonFragment(), escaped);
+			g_updatesOffMain.load(), g_taskletsOffMain.load(), g_tasksToJobsCalls.load(), g_reports.load(), Roles::StateJsonFragment(), LoopGuard::StateJsonFragment(), escaped);
 	}
 }
