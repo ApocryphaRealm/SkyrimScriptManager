@@ -873,7 +873,11 @@ namespace Monitor
 			g_allFrames.fetch_add(1, std::memory_order_relaxed);
 			if (GetCurrentThreadId() != g_mainThread)
 			{
-				g_updatesOffMain.fetch_add(1, std::memory_order_relaxed);
+				// A list can run the VM's update on another thread, and then no report ever runs: say so once.
+				if (g_updatesOffMain.fetch_add(1, std::memory_order_relaxed) == 0)
+				{
+					logger::warn("The VM's update runs on thread {}, not on {} where this plugin was installed: no reports while that holds", GetCurrentThreadId(), g_mainThread);
+				}
 				return;
 			}
 
@@ -893,7 +897,11 @@ namespace Monitor
 			if (over) { g_c.overstressedFrames.fetch_add(1, std::memory_order_relaxed); }
 
 			if (!g_started.load(std::memory_order_relaxed)) { return; }
-			if (g_lastReport == 0) { g_lastReport = now; }
+			if (g_lastReport == 0)
+			{
+				g_lastReport = now;
+				logger::info("Reports running: the first in {:.0f} s", g_settings.intervalSeconds);
+			}
 
 			LoopGuard::Tick(a_vm, over, g_layoutOK, now, g_ticksPerMS * 1000.0);
 
