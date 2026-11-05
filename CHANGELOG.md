@@ -23,4 +23,5 @@ Written as changes happen, not reconstructed afterwards (rule 61). Each version 
 ### Changed
 - Renamed Skyrim Script Manager, before any release: plugin, log, INI, Roles, Overrides and Flips files are SkyrimScriptManager, the DevBench tool is scriptmanager.state. The repo and its folder keep the name ScriptLoadMonitor for now.
 ### Fixed
+- Reports ran only when the VM's update was on one thread, so a list that moves it between threads got almost none. Reports now run wherever the update runs, one tick at a time.
 - A stack whose effect had already ended now counts for the effect's target, read from the start's first parameter, instead of for no one: that was nearly every stack in the flood. Reading a script object from a stack no longer copies its smart pointer, which wrote a refcount through an unchecked value.

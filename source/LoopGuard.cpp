@@ -556,6 +556,8 @@ namespace LoopGuard
 			for (const auto& [handle, effect] : effects)
 			{
 				const auto real = policy->GetHandleForObject(RE::ActiveEffect::VMTYPEID, effect);
+				// The game's empty handle: this effect has no handle to compare (seen on the player's effects as a save loads, unique id 0).
+				if (real == 0x0000FFFF00000000ULL) { continue; }
 				a_checked++;
 				if (real != handle)
 				{
