@@ -95,12 +95,13 @@ namespace Monitor
 		std::atomic<int> g_taskletsActive{ 0 };
 		std::atomic<std::uint32_t> g_taskletsOffMain{ 0 };
 		std::atomic<std::uint32_t> g_updatesOffMain{ 0 };
+		std::atomic<bool> g_tickBusy{ false };
 		std::atomic<std::uint32_t> g_tasksToJobsCalls{ 0 };
 		std::atomic<std::uint64_t> g_allFrames{ 0 };
 		std::atomic<std::uint32_t> g_reports{ 0 };
 		std::atomic<bool> g_forceReport{ false };
 
-		DWORD g_mainThread = 0;
+		std::atomic<DWORD> g_mainThread{ 0 };   // the game's main thread: first the one that installed the hooks, then the one that delivers a loaded game
 		std::atomic<bool> g_started{ false };   // a game has loaded: reports run
 		bool g_layoutOK = false;
 		std::string g_layoutResult = "not checked yet";
@@ -563,7 +564,6 @@ namespace Monitor
 		void Walk(VM* a_vm)
 		{
 			if (g_walkOff.load() || !g_layoutOK) { return; }
-			if (GetCurrentThreadId() != g_mainThread) { return; }
 			if (g_taskletsActive.load(std::memory_order_acquire) != 0) { return; }
 			if (a_vm->freezeState.get() != VM::FreezeState::kNotFrozen) { return; }
 
@@ -871,15 +871,12 @@ namespace Monitor
 			const auto now = Now();
 			g_budget.store(a_budget, std::memory_order_relaxed);
 			g_allFrames.fetch_add(1, std::memory_order_relaxed);
-			if (GetCurrentThreadId() != g_mainThread)
-			{
-				// A list can run the VM's update on another thread, and then no report ever runs: say so once.
-				if (g_updatesOffMain.fetch_add(1, std::memory_order_relaxed) == 0)
-				{
-					logger::warn("The VM's update runs on thread {}, not on {} where this plugin was installed: no reports while that holds", GetCurrentThreadId(), g_mainThread);
-				}
-				return;
-			}
+			// A list can run the VM's update on a different thread frame by frame (seen 2026-11-04: 17,721 of 19,070 frames off the
+			// thread that delivers a loaded game), so it is not tied to one thread: one tick at a time, and a tick that finds another
+			// running leaves that frame out. It runs where the VM's update runs, so a read here is as safe as the update's own.
+			if (g_tickBusy.exchange(true, std::memory_order_acquire)) { return; }
+			const struct TickDone { ~TickDone() { g_tickBusy.store(false, std::memory_order_release); } } tickDone;
+			if (GetCurrentThreadId() != g_mainThread) { g_updatesOffMain.fetch_add(1, std::memory_order_relaxed); }
 
 			if (g_lastTick)
 			{
@@ -1047,6 +1044,15 @@ namespace Monitor
 			auto names = LoadedScriptNames(vm);
 			logger::info("{} script types loaded", names.size());
 			Roles::OfferLoadedScripts(std::move(names));
+		}
+		// The plugin can be installed on a loader thread (seen 2026-11-04: every update off it, so no report ever ran). SKSE delivers
+		// a loaded game on the game's main thread, which is the one the VM's update has to be on.
+		const auto here = GetCurrentThreadId();
+		if (const auto was = g_mainThread.exchange(here); was != here)
+		{
+			logger::info("Main thread is {}, not {} where the hooks went in", here, was);
+			g_updatesOffMain.store(0);
+			g_taskletsOffMain.store(0);
 		}
 		g_started.store(true);
 	}
