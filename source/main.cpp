@@ -6,6 +6,7 @@
 
 #include "DevBench/DevBenchAPI.h"
 #include "FastReads.h"
+#include "HangRecorder.h"
 #include "LoopGuard.h"
 #include "Monitor.h"
 #include "Roles.h"
@@ -58,6 +59,11 @@ namespace
 			LoopGuard::StartFlood(ArgOf(args, "target"), ArgOf(args, "event"), rate.empty() ? 40.0F : static_cast<float>(std::atof(rate.c_str())), seconds.empty() ? 20.0F : static_cast<float>(std::atof(seconds.c_str())));
 		}
 		else if (op == "floodstop") { LoopGuard::StopFlood(); }
+		else if (op == "stall")
+		{
+			const auto seconds = ArgOf(args, "seconds");
+			HangRecorder::TestStall(ArgOf(args, "where"), seconds.empty() ? 20.0F : static_cast<float>(std::atof(seconds.c_str())));
+		}
 		a_write(a_sink, Monitor::StateJson().c_str());
 	}
 
@@ -76,8 +82,9 @@ namespace
 			"loop holds the loop watch and guard: detections, what they did, the last lines. op=report writes a report at the next VM update. "
 			"op=flood repeats an event on a test actor from the main thread so a detection can be proved, for test saves only: target = hex form id (default: the nearest actor with a scripted effect), "
 			"event = effect (default: real OnEffectFinish and OnEffectStart in turn to each of its scripted effects) or any other name (sent to the actor with no arguments, so a name no script has runs nothing), "
-			"rate = per second (default 40, up to 500), seconds (default 20, up to 300). op=floodstop ends it.\","
-			"\"inputSchema\":{\"type\":\"object\",\"properties\":{\"op\":{\"type\":\"string\"},\"target\":{\"type\":\"string\"},\"event\":{\"type\":\"string\"},\"rate\":{\"type\":\"number\"},\"seconds\":{\"type\":\"number\"}}},"
+			"rate = per second (default 40, up to 500), seconds (default 20, up to 300). op=floodstop ends it. "
+			"op=stall proves the hang recorder without a real freeze: where = main (default, the main thread sleeps in a queued task) or read (the next recorded read call sleeps inside the recorder's wrapper, on its own thread), seconds (default 20, up to 180). hang holds the recorder's numbers.\","
+			"\"inputSchema\":{\"type\":\"object\",\"properties\":{\"op\":{\"type\":\"string\"},\"target\":{\"type\":\"string\"},\"event\":{\"type\":\"string\"},\"where\":{\"type\":\"string\"},\"rate\":{\"type\":\"number\"},\"seconds\":{\"type\":\"number\"}}},"
 			"\"readOnly\":false}";
 		registered = devBench->RegisterTool("scriptmanager.state", descriptor, &DevBenchHandler, nullptr);
 		logger::debug("DevBench tool scriptmanager.state: {}", registered ? "registered" : "refused");
@@ -96,14 +103,17 @@ namespace
 			LoopGuard::OnDataLoaded();
 			Roles::OnDataLoaded();
 			FastReads::Apply(g_fastReads);
+			HangRecorder::OnDataLoaded();
 			break;
 		case SKSE::MessagingInterface::kPostLoadGame:
 		case SKSE::MessagingInterface::kNewGame:
 			Monitor::OnGameLoaded();
 			LoopGuard::OnGameLoaded();
+			HangRecorder::OnGameLoaded();
 			break;
 		case SKSE::MessagingInterface::kPreLoadGame:
 			LoopGuard::OnPreLoad();
+			HangRecorder::OnPreLoad();
 			break;
 		case SKSE::MessagingInterface::kSaveGame:
 			LoopGuard::OnSave();
@@ -139,6 +149,7 @@ namespace
 		Monitor::Configure(settings);
 		Roles::Configure(ReadInt(L"Roles", L"bClassifyScripts", 1, 0, 1) != 0);
 		g_fastReads = ReadInt(L"Manage", L"bFastReads", 0, 0, 1) != 0;
+		HangRecorder::Configure(ReadInt(L"HangRecorder", L"bHangRecorder", 1, 0, 1) != 0, ReadFloat(L"HangRecorder", L"fStallSeconds", L"15", 5.0F, 600.0F));
 
 		LoopGuard::Settings loop;
 		loop.watch = ReadInt(L"LoopWatch", L"bLoopWatch", 1, 0, 1) != 0;
@@ -178,6 +189,7 @@ SKSEPluginLoad(const SKSE::LoadInterface* a_skse)
 	spdlog::set_pattern("[%H:%M:%S] [%l] %v");
 	SKSE::log::describe_level("SkyrimScriptManager.ini");
 	LoadSettings();
+	HangRecorder::NoteInstallThread();
 	logger::info("{} {} loading.", kDisplayName, SKSE::PluginDeclaration::GetSingleton()->GetVersion().string("."));
 	Monitor::InstallHooks();
 	SKSE::GetMessagingInterface()->RegisterListener(MessageHandler);

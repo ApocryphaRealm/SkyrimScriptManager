@@ -79,9 +79,21 @@ The guard turns itself off for the session, delivering what it holds, on any exc
 
 Not with what is built, and no. The attach and load events are notifications after the fact. Stopping it would mean a hook on the code that moves or attaches an actor, which has not been found, and would risk an actor with no 3D or in the wrong cell. The cause is still inferred: the watch's `LOOP cause:` line is what would prove it (attach rate tracking the restarts), and whether FEC's own `ResetActor3D_FEC` feeds it. Until then the answer is a patch to the actor, as `Reindeer Herd Stays Put` is, and the log names what to look at.
 
+## The hang recorder
+
+On by default (`bHangRecorder=1`, `fStallSeconds=15`, 5 to 600). A thread of its own samples the engine's frame counter four times a second. No frame for that long writes a report to `SkyrimScriptManager.log`, and a second 60 s later if it lasts. A pausing menu with the VM's update still moving counts as alive, and when frames return the log says how long they were gone, so a long loading screen reads as what it is.
+
+A report holds: the fast reads state; every recorded read call in flight, with its thread, how long, the calling script and its route; the load state; the VM's counts, fields and which of its locks and the forms table's lock are held, read and not taken; the main thread's registers and return addresses; the same, without registers, for the other threads in the exe or an SKSE plugin, busiest first, identical stacks folded; the last 64 recorded read calls.
+
+**It records the 17 calls `bFastReads` lists, on or off.** Each native gets a copy of its vtable with `Call` wrapped, so the two routes are told apart: `tasklet` (the fast route, on a job thread) or `message` (the VM's function messages). With fast reads off every call must say `message`, which makes an off run a real control.
+
+**What it will not do once a stall is seen:** allocate, use spdlog, take the loader lock or call the game, because a stuck thread can hold any of those. It formats into static buffers and writes through its own file handle, reads memory with `ReadProcessMemory` so no fault can reach a crash logger's handler, and holds each thread for microseconds with only kernel calls in between. The stacks are scanned, not walked, since a walk needs the unwind tables' locks; an old value can appear, and each entry at least follows a call instruction. `tools\hangtest.cpp` runs the core with a stuck thread holding the process heap and another the loader lock, and fails if the reports do not finish.
+
+**What a report can and cannot say.** A read in flight for seconds, or a stack through `SkyrimScriptManager.dll`, convicts that call. None in flight, and no job thread in a read, clears fast reads of being stuck at that moment; it does not clear memory a fast read may have damaged earlier, which only the same trip with them off can speak to.
+
 ## Test steps
 
-Each needs Main Agent's combined run. DevBench tool: `scriptmanager.state`. `op=report` writes a report on demand; `op=flood` repeats an event from the main thread, test saves only.
+Each needs Main Agent's combined run. DevBench tool: `scriptmanager.state`. `op=report` writes a report on demand; `op=flood` repeats an event from the main thread, test saves only; `op=stall where=main|read seconds=N` stops the main thread or the next recorded read call for N seconds to prove the hang recorder.
 
 Remove `Reindeer Herd Stays Put` from the test profile only for step 13.
 

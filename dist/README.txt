@@ -24,6 +24,11 @@ scripts until the storm ends. A script sees its first start and finish, and a fi
 on that actor still goes through, and no other event is ever dropped. It removes the load, not the cause: the actor keeps re-attaching
 until something changes what moves it.
 
+THE HANG RECORDER, on as shipped (bHangRecorder, fStallSeconds)
+When the game stops drawing frames for 15 seconds, a thread of its own writes down where every game thread is standing, which read calls
+are running, the last 64 of them, whether a load is on and what state the script engine is in, then again a minute later if it lasts.
+It takes no game lock, so it can write while the game is frozen. A long loading screen can set it off; the log then says when frames came back.
+
 A clean log only means nothing bad was seen in that session. The monitor looks at stacks at moments, not at every call.
 
 REQUIREMENTS

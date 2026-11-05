@@ -11,6 +11,7 @@ Written as changes happen, not reconstructed afterwards (rule 61). Each version 
 ## 1.0.0 - 2026-11-04 - untested
 
 ### Added
+- The hang recorder, on by default (bHangRecorder, fStallSeconds=15): when no frame comes for that long, a thread of its own that takes no game lock writes the main thread's stack, the stacks of the other threads in the game and in SKSE plugins, the recorded read calls in flight and the last 64 of them, the load state, the VM's state and which of its locks are held to the log, and again 60 s later if it lasts. It records the calls bFastReads marks whether that setting is on or off, noting the route of each, so a run with it off is a control. It logs the thread ids at start. DevBench op=stall proves it without a real freeze.
 - The Skyrim 1.7.x build line, on CommonLibSSE-NG 7.2.0.
 - DevBench op=flood and op=floodstop repeat an event on a test actor from the main thread, to prove a detection without waiting on luck. The tool is no longer read-only.
 - The loop guard, off by default (bLoopGuard): on a caught actor while the VM is overstressed, drops repeated OnEffectStart with its OnEffectFinish, keeping each effect's pairs balanced, and delivers a last start to any effect still running at release or a save. Any other event on a held effect delivers the start first. No other event is ever dropped. It turns itself off on any fault.

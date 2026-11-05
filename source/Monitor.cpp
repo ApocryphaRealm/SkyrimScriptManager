@@ -20,6 +20,7 @@
 // turns off and says so. Every read is under structured exception handling: a fault turns the walk off for the session.
 #include "PCH.h"
 
+#include "HangRecorder.h"
 #include "LoopGuard.h"
 #include "Monitor.h"
 #include "Roles.h"
@@ -99,6 +100,11 @@ namespace Monitor
 		std::atomic<std::uint32_t> g_tasksToJobsCalls{ 0 };
 		std::atomic<std::uint64_t> g_allFrames{ 0 };
 		std::atomic<std::uint32_t> g_reports{ 0 };
+		std::atomic<std::uint32_t> g_updateThread{ 0 };       // inside the VM's update now, else 0
+		std::atomic<std::uint32_t> g_lastUpdateThread{ 0 };
+		std::atomic<std::uint64_t> g_updateStart{ 0 };
+		std::atomic<std::uint64_t> g_updateEnd{ 0 };
+		std::atomic<std::uint32_t> g_lastTaskletThread{ 0 };
 		std::atomic<bool> g_forceReport{ false };
 
 		std::atomic<DWORD> g_mainThread{ 0 };   // the game's main thread: first the one that installed the hooks, then the one that delivers a loaded game
@@ -927,10 +933,17 @@ namespace Monitor
 		{
 			static void thunk(VM* a_vm, float a_budget)
 			{
+				const auto thread = GetCurrentThreadId();
+				g_updateStart.store(Now(), std::memory_order_relaxed);
+				g_lastUpdateThread.store(thread, std::memory_order_relaxed);
+				g_updateThread.store(thread, std::memory_order_relaxed);
 				Tick(a_vm, a_budget);
 				const auto start = Now();
 				func(a_vm, a_budget);
-				const auto spent = Now() - start;
+				const auto end = Now();
+				const auto spent = end - start;
+				g_updateEnd.store(end, std::memory_order_relaxed);
+				g_updateThread.store(0, std::memory_order_relaxed);
 				g_c.updateTicks.fetch_add(spent, std::memory_order_relaxed);
 				Raise(g_c.worstUpdateTicks, spent);
 			}
@@ -942,6 +955,7 @@ namespace Monitor
 			static void thunk(VM* a_vm, float a_budget)
 			{
 				g_taskletsActive.fetch_add(1, std::memory_order_acq_rel);
+				g_lastTaskletThread.store(GetCurrentThreadId(), std::memory_order_relaxed);
 				if (GetCurrentThreadId() != g_mainThread) { g_taskletsOffMain.fetch_add(1, std::memory_order_relaxed); }
 				const auto start = Now();
 				func(a_vm, a_budget);
@@ -1059,6 +1073,30 @@ namespace Monitor
 
 	void RequestReport() { g_forceReport.store(true); }
 
+	HangSnapshot GetHangSnapshot()
+	{
+		HangSnapshot s{};
+		s.vmUpdates = g_allFrames.load(std::memory_order_relaxed);
+		s.running = g_nowRunning.load(std::memory_order_relaxed);
+		s.suspended = g_nowSuspended.load(std::memory_order_relaxed);
+		s.messages = g_nowMessages.load(std::memory_order_relaxed);
+		s.detached = g_nowDetached.load(std::memory_order_relaxed);
+		s.overstressed = g_overstressed.load(std::memory_order_relaxed);
+		s.budgetMS = g_budget.load(std::memory_order_relaxed);
+		s.updateThread = g_updateThread.load(std::memory_order_relaxed);
+		const auto now = Now();
+		s.updateRunningMS = s.updateThread != 0 ? ToMS(now - g_updateStart.load(std::memory_order_relaxed)) : 0.0;
+		s.lastUpdateThread = g_lastUpdateThread.load(std::memory_order_relaxed);
+		const auto end = g_updateEnd.load(std::memory_order_relaxed);
+		s.sinceUpdateEndedMS = end != 0 ? ToMS(now - end) : -1.0;
+		s.taskletsActive = g_taskletsActive.load(std::memory_order_relaxed);
+		s.lastTaskletThread = g_lastTaskletThread.load(std::memory_order_relaxed);
+		s.tasksToJobs = g_tasksToJobsCalls.load(std::memory_order_relaxed);
+		s.updatesOffMain = g_updatesOffMain.load(std::memory_order_relaxed);
+		s.taskletsOffMain = g_taskletsOffMain.load(std::memory_order_relaxed);
+		return s;
+	}
+
 	std::string StateJson()
 	{
 		// Runs on DevBench's thread: only atomics and copied text, nothing from the VM itself.
@@ -1084,9 +1122,9 @@ namespace Monitor
 			}
 		}
 		return std::format(
-			R"({{"ok":true,"started":{},"layoutOK":{},"layoutResult":"{}","walkOff":{},"overstressed":{},"budgetMS":{:.3f},"running":{},"suspended":{},"queuedCalls":{},"detached":{},"statsEvents":{},"frames":{},"updatesOffMain":{},"taskletCallsOffMain":{},"tasksToJobsCalls":{},"reports":{},{},{},"lastReport":"{}"}})",
+			R"({{"ok":true,"started":{},"layoutOK":{},"layoutResult":"{}","walkOff":{},"overstressed":{},"budgetMS":{:.3f},"running":{},"suspended":{},"queuedCalls":{},"detached":{},"statsEvents":{},"frames":{},"updatesOffMain":{},"taskletCallsOffMain":{},"tasksToJobsCalls":{},"reports":{},{},{},{},"lastReport":"{}"}})",
 			g_started.load(), g_layoutOK, g_layoutResult, g_walkOff.load(), g_overstressed.load(), g_budget.load(),
 			g_nowRunning.load(), g_nowSuspended.load(), g_nowMessages.load(), g_nowDetached.load(), g_statsEvents.load(), g_allFrames.load(),
-			g_updatesOffMain.load(), g_taskletsOffMain.load(), g_tasksToJobsCalls.load(), g_reports.load(), Roles::StateJsonFragment(), LoopGuard::StateJsonFragment(), escaped);
+			g_updatesOffMain.load(), g_taskletsOffMain.load(), g_tasksToJobsCalls.load(), g_reports.load(), Roles::StateJsonFragment(), LoopGuard::StateJsonFragment(), HangRecorder::StateJsonFragment(), escaped);
 	}
 }

@@ -34,11 +34,7 @@ namespace FastReads
 			return false;
 		}
 
-		struct Name
-		{
-			const char* type;
-			const char* function;
-		};
+		const char* g_status = "OFF (bFastReads=0)";
 
 		// Reads of a record's own data. Nothing about a live actor's position, state or inventory: those change under a job thread.
 		constexpr Name kReads[] = {
@@ -60,12 +56,14 @@ namespace FastReads
 		}
 		if (PapyrusTweaksSpeedUpIsOn())
 		{
+			g_status = "STANDING ASIDE (bFastReads=1, but Papyrus Tweaks' bSpeedUpNativeCalls is on and lets these calls through itself)";
 			logger::warn("Fast reads: standing aside, Papyrus Tweaks' bSpeedUpNativeCalls is on and already covers these calls");
 			return;
 		}
 		auto* vm = RE::BSScript::Internal::VirtualMachine::GetSingleton();
 		if (!vm)
 		{
+			g_status = "OFF (bFastReads=1, but there was no VM to mark them on)";
 			logger::error("Fast reads: no VM, nothing done");
 			return;
 		}
@@ -76,6 +74,11 @@ namespace FastReads
 			logger::debug("Fast reads: {}.{}", read.type, read.function);
 			++count;
 		}
+		g_status = "ON (bFastReads=1)";
 		logger::info("Fast reads: ON for {} read-only native calls. These now answer without waiting for the frame.", count);
 	}
+
+	std::span<const Name> Reads() { return kReads; }
+
+	const char* Status() { return g_status; }
 }
